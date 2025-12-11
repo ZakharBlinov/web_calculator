@@ -1,0 +1,64 @@
+{% extends 'calculator/base.html' %}
+
+{% block content %}
+<div class="history-container">
+    <h1>История операций</h1>
+    
+    <div class="history-controls">
+        <button onclick="clearHistory()" class="btn-clear-history">Очистить историю</button>
+    </div>
+    
+    {% if history %}
+    <div class="history-list">
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>Операция</th>
+                    <th>Результат</th>
+                    <th>Время</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in history %}
+                <tr>
+                    <td>
+                        {{ entry.num1 }}
+                        {{ entry.operation }}
+                        {% if entry.num2 is not None %}
+                        {{ entry.num2 }}
+                        {% endif %}
+                    </td>
+                    <td>{{ entry.result }}</td>
+                    <td>{{ entry.timestamp }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-history">
+        <p>История операций пуста</p>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+function clearHistory() {
+    if (confirm('Вы уверены, что хотите очистить историю?')) {
+        fetch('{% url "clear_history" %}', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            }
+        });
+    }
+}
+</script>
+{% endblock %}

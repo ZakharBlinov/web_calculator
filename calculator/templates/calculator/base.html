@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Веб-калькулятор{% endblock %}</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'calculator/css/style.css' %}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="{% url 'calculator' %}" class="nav-brand">Веб-калькулятор</a>
+            <div class="nav-links">
+                <a href="{% url 'calculator' %}">Калькулятор</a>
+                <a href="{% url 'history' %}">История операций</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        {% block content %}
+        {% endblock %}
+    </div>
+
+    <footer class="footer">
+        <p>Веб-калькулятор на Django © 2024</p>
+    </footer>
+
+    {% block scripts %}
+    {% endblock %}
+</body>
+</html>

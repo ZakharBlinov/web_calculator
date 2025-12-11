@@ -1,0 +1,146 @@
+{% extends 'calculator/base.html' %}
+
+{% block content %}
+<div class="calculator-container">
+    <h1>Калькулятор</h1>
+    
+    <div class="calculator-form">
+        <div class="input-group">
+            <input type="text" id="num1" placeholder="Первое число" class="number-input">
+            <select id="operation" class="operation-select">
+                <option value="add">Сложение (+)</option>
+                <option value="subtract">Вычитание (-)</option>
+                <option value="multiply">Умножение (*)</option>
+                <option value="divide">Деление (/)</option>
+                <option value="power">Возведение в степень (^)</option>
+                <option value="sqrt">Квадратный корень (√)</option>
+            </select>
+            <input type="text" id="num2" placeholder="Второе число" class="number-input">
+        </div>
+        
+        <div class="buttons">
+            <button onclick="calculate()" class="btn-calculate">Вычислить</button>
+            <button onclick="clearInputs()" class="btn-clear">Очистить</button>
+        </div>
+    </div>
+
+    <div class="result-container">
+        <h2>Результат:</h2>
+        <div id="result" class="result-display">
+            Введите числа и выберите операцию
+        </div>
+        <div id="error" class="error-message"></div>
+    </div>
+
+    <div class="instructions">
+        <h3>Инструкция:</h3>
+        <ul>
+            <li>Введите числа в поля ввода</li>
+            <li>Выберите операцию из выпадающего списка</li>
+            <li>Для квадратного корня используйте только первое поле</li>
+            <li>Поддерживаются дробные числа (через точку)</li>
+        </ul>
+    </div>
+</div>
+
+<script>
+let csrfToken = '{{ csrf_token }}';
+
+function validateInput(value) {
+    if (value === '') return true;
+    const regex = /^-?\d*\.?\d+$/;
+    return regex.test(value);
+}
+
+function calculate() {
+    const num1 = document.getElementById('num1').value;
+    const num2 = document.getElementById('num2').value;
+    const operation = document.getElementById('operation').value;
+    const resultDiv = document.getElementById('result');
+    const errorDiv = document.getElementById('error');
+    
+    errorDiv.textContent = '';
+    errorDiv.classList.remove('show');
+    
+    if (!validateInput(num1)) {
+        showError('Первое число содержит недопустимые символы');
+        return;
+    }
+    
+    if (operation !== 'sqrt' && !validateInput(num2)) {
+        showError('Второе число содержит недопустимые символы');
+        return;
+    }
+    
+    if (num1 === '' || (operation !== 'sqrt' && num2 === '')) {
+        showError('Заполните все поля');
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('num1', num1);
+    formData.append('num2', num2);
+    formData.append('operation', operation);
+    formData.append('csrfmiddlewaretoken', csrfToken);
+    
+    fetch('{% url "calculate" %}', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            showError(data.error);
+        } else {
+            resultDiv.textContent = data.operation;
+            resultDiv.classList.add('success');
+            setTimeout(() => resultDiv.classList.remove('success'), 1000);
+        }
+    })
+    .catch(error => {
+        showError('Ошибка соединения с сервером');
+    });
+}
+
+function clearInputs() {
+    document.getElementById('num1').value = '';
+    document.getElementById('num2').value = '';
+    document.getElementById('result').textContent = 'Введите числа и выберите операцию';
+    document.getElementById('error').textContent = '';
+    document.getElementById('error').classList.remove('show');
+}
+
+function showError(message) {
+    const errorDiv = document.getElementById('error');
+    errorDiv.textContent = message;
+    errorDiv.classList.add('show');
+}
+
+document.getElementById('operation').addEventListener('change', function() {
+    const num2Input = document.getElementById('num2');
+    if (this.value === 'sqrt') {
+        num2Input.disabled = true;
+        num2Input.placeholder = 'Не требуется';
+    } else {
+        num2Input.disabled = false;
+        num2Input.placeholder = 'Второе число';
+    }
+});
+
+document.getElementById('num1').addEventListener('input', function() {
+    if (!validateInput(this.value) && this.value !== '') {
+        this.classList.add('invalid');
+    } else {
+        this.classList.remove('invalid');
+    }
+});
+
+document.getElementById('num2').addEventListener('input', function() {
+    if (!validateInput(this.value) && this.value !== '') {
+        this.classList.add('invalid');
+    } else {
+        this.classList.remove('invalid');
+    }
+});
+</script>
+{% endblock %}
