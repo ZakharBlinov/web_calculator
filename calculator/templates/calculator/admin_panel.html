@@ -4,13 +4,27 @@
 <div class="admin-container">
     <h1>Административная панель</h1>
     
+    {% if user.is_authenticated and user.is_staff %}
     <div class="admin-stats" id="admin-stats"></div>
     
     <div class="admin-controls">
         <div class="user-filters">
-            <input type="text" id="user-search" placeholder="Поиск пользователя..." oninput="loadAdminCalculations()">
-            <input type="number" id="user-id" placeholder="ID пользователя" onchange="loadAdminCalculations()">
+            <input type="text" id="user-search" placeholder="Поиск по имени пользователя...">
+            <input type="number" id="user-id" placeholder="ID пользователя">
+            <select id="operation-filter">
+                <option value="">Все операции</option>
+                <option value="add">Сложение</option>
+                <option value="subtract">Вычитание</option>
+                <option value="multiply">Умножение</option>
+                <option value="divide">Деление</option>
+                <option value="power">Степень</option>
+                <option value="sqrt">Корень</option>
+            </select>
             <button onclick="loadAdminCalculations()" class="btn-refresh">Обновить</button>
+        </div>
+        
+        <div class="admin-actions">
+            <button onclick="clearAllHistory()" class="btn-clear-all">Очистить всю историю</button>
         </div>
     </div>
     
@@ -34,45 +48,102 @@
             </tbody>
         </table>
     </div>
+    
+    <div class="pagination" id="pagination"></div>
+    
+    {% else %}
+    <div class="access-denied">
+        <h2>⚠️ Доступ запрещен</h2>
+        <p>Для доступа к административной панели необходимы права администратора.</p>
+        <p>Текущий пользователь: <strong>{{ user.username|default:"Не авторизован" }}</strong></p>
+        <p>Статус администратора: <strong>{{ user.is_staff|yesno:"Да,Нет" }}</strong></p>
+        
+        {% if user.is_authenticated %}
+        <div class="suggestions">
+            <p>Возможные решения:</p>
+            <ul>
+                <li>Выйти и войти под учетной записью администратора</li>
+                <li>Обратиться к существующему администратору</li>
+                <li>Создать нового администратора через консоль Django</li>
+            </ul>
+        </div>
+        
+        <div class="admin-commands">
+            <h3>Создание администратора:</h3>
+            <pre>
+# В терминале выполните:
+python manage.py createsuperuser
+# Или для существующего пользователя:
+python manage.py shell
+from django.contrib.auth.models import User
+user = User.objects.get(username='ВАШЕ_ИМЯ')
+user.is_staff = True
+user.is_superuser = True
+user.save()
+            </pre>
+        </div>
+        {% else %}
+        <p>Пожалуйста, <a href="#" onclick="showLogin()">войдите в систему</a>.</p>
+        {% endif %}
+        
+        <div class="navigation-links">
+            <a href="/calculator/" class="btn-back">Вернуться к калькулятору</a>
+            <a href="/admin/" class="btn-django-admin">Django Admin</a>
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    if (!currentUser || !currentUser.is_staff) {
-        window.location.href = '/calculator/';
-        return;
+    if (currentUser && currentUser.is_staff) {
+        loadAdminCalculations();
+        loadAdminStatistics();
+    } else {
+        console.log('Пользователь не является администратором');
     }
-    loadAdminCalculations();
-    loadAdminStatistics();
 });
 
 async function loadAdminCalculations() {
-    const search = document.getElementById('user-search').value;
-    const userId = document.getElementById('user-id').value;
-    
-    let url = '/calculator/api/admin/calculations/?ordering=-created_at';
-    
-    if (search) {
-        url += `&search=${encodeURIComponent(search)}`;
-    }
-    
-    if (userId) {
-        url += `&user_id=${userId}`;
+    if (!currentUser || !currentUser.is_staff) {
+        showMessage('Требуются права администратора', true);
+        return;
     }
     
     try {
+        const search = document.getElementById('user-search').value;
+        const userId = document.getElementById('user-id').value;
+        const operation = document.getElementById('operation-filter').value;
+        
+        let url = '/calculator/api/admin/calculations/?ordering=-created_at';
+        
+        if (search) {
+            url += `&search=${encodeURIComponent(search)}`;
+        }
+        
+        if (userId) {
+            url += `&user_id=${userId}`;
+        }
+        
+        if (operation) {
+            url += `&operation=${operation}`;
+        }
+        
         const response = await fetch(url, {
-            headers: {
-                'Authorization': `Bearer ${accessToken}`
-            }
+            credentials: 'include'
         });
         
         if (response.ok) {
             const data = await response.json();
             renderAdminTable(data.results || data);
+        } else if (response.status === 403) {
+            showMessage('Доступ запрещен. Требуются права администратора.', true);
+        } else {
+            const errorData = await response.json();
+            showMessage('Ошибка загрузки: ' + (errorData.detail || response.status), true);
         }
     } catch (error) {
-        console.error('Ошибка загрузки данных:', error);
+        showMessage('Ошибка сети: ' + error.message, true);
     }
 }
 
@@ -92,19 +163,35 @@ function renderAdminTable(calculations) {
     
     calculations.forEach(calc => {
         const date = new Date(calc.created_at);
-        const formattedDate = date.toLocaleDateString('ru-RU') + ' ' + date.toLocaleTimeString('ru-RU');
+        const formattedDate = date.toLocaleDateString('ru-RU') + ' ' + date.toLocaleTimeString('ru-RU', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
         
         html += `
             <tr data-id="${calc.id}">
                 <td>${calc.id}</td>
-                <td>${calc.username} (ID: ${calc.user})</td>
+                <td>
+                    <div class="user-cell">
+                        <div class="username">${calc.username || 'Неизвестно'}</div>
+                        <div class="user-id">ID: ${calc.user}</div>
+                    </div>
+                </td>
                 <td>${calc.expression}</td>
-                <td>${calc.result}</td>
-                <td>${calc.operation_display}</td>
+                <td><strong>${calc.result}</strong></td>
+                <td>
+                    <span class="operation-badge ${calc.operation}">
+                        ${calc.operation_display}
+                    </span>
+                </td>
                 <td>${formattedDate}</td>
                 <td>
-                    <button onclick="adminEditCalculation(${calc.id})" class="btn-edit">✏️</button>
-                    <button onclick="adminDeleteCalculation(${calc.id})" class="btn-delete">🗑️</button>
+                    <button onclick="adminDeleteCalculation(${calc.id})" class="btn-delete" title="Удалить">
+                        🗑️
+                    </button>
+                    <button onclick="adminViewDetails(${calc.id})" class="btn-view" title="Просмотр">
+                        👁️
+                    </button>
                 </td>
             </tr>
         `;
@@ -114,11 +201,11 @@ function renderAdminTable(calculations) {
 }
 
 async function loadAdminStatistics() {
+    if (!currentUser || !currentUser.is_staff) return;
+    
     try {
         const response = await fetch('/calculator/api/statistics/', {
-            headers: {
-                'Authorization': `Bearer ${accessToken}`
-            }
+            credentials: 'include'
         });
         
         if (response.ok) {
@@ -126,19 +213,30 @@ async function loadAdminStatistics() {
             const statsDiv = document.getElementById('admin-stats');
             
             let html = '<div class="admin-stats-container">';
-            html += `<div class="stat-card"><h3>${data.total_calculations}</h3><p>Всего вычислений</p></div>`;
-            html += `<div class="stat-card"><h3>${data.total_users}</h3><p>Пользователей</p></div>`;
+            html += `<div class="stat-card total"><h3>${data.total_calculations}</h3><p>Всего вычислений</p></div>`;
             
-            for (const [op, count] of Object.entries(data.operation_stats)) {
-                const opNames = {
-                    'add': '➕',
-                    'subtract': '➖',
-                    'multiply': '✖️',
-                    'divide': '➗',
-                    'power': '🔢',
-                    'sqrt': '√'
-                };
-                html += `<div class="stat-card"><h3>${count}</h3><p>${opNames[op]}</p></div>`;
+            if (data.recent_calculations && data.recent_calculations.length > 0) {
+                html += `<div class="stat-card recent"><h3>${data.recent_calculations.length}</h3><p>Последние операции</p></div>`;
+            }
+            
+            // Группировка по операциям
+            const operationCounts = {};
+            if (data.recent_calculations) {
+                data.recent_calculations.forEach(calc => {
+                    operationCounts[calc.operation] = (operationCounts[calc.operation] || 0) + 1;
+                });
+                
+                Object.entries(operationCounts).forEach(([op, count]) => {
+                    const opNames = {
+                        'add': '➕',
+                        'subtract': '➖',
+                        'multiply': '✖️',
+                        'divide': '➗',
+                        'power': '🔢',
+                        'sqrt': '√'
+                    };
+                    html += `<div class="stat-card"><h3>${count}</h3><p>${opNames[op] || op}</p></div>`;
+                });
             }
             
             html += '</div>';
@@ -150,60 +248,78 @@ async function loadAdminStatistics() {
 }
 
 async function adminDeleteCalculation(id) {
-    if (!confirm('Удалить эту запись? Это действие нельзя отменить.')) {
+    if (!confirm('Вы уверены, что хотите удалить эту запись? Это действие нельзя отменить.')) {
         return;
     }
     
     try {
+        const csrfToken = getCSRFToken();
         const response = await fetch(`/calculator/api/calculations/${id}/`, {
             method: 'DELETE',
             headers: {
-                'Authorization': `Bearer ${accessToken}`
-            }
+                'X-CSRFToken': csrfToken
+            },
+            credentials: 'include'
         });
         
         if (response.ok) {
             showMessage('Запись удалена');
             loadAdminCalculations();
+        } else if (response.status === 403) {
+            showMessage('Недостаточно прав для удаления этой записи', true);
+        } else {
+            const errorData = await response.json();
+            showMessage('Ошибка удаления: ' + (errorData.detail || response.status), true);
         }
     } catch (error) {
-        showError('Ошибка удаления: ' + error.message);
+        showMessage('Ошибка сети: ' + error.message, true);
     }
 }
 
-async function adminEditCalculation(id) {
-    const newResult = prompt('Введите новое значение результата:');
+async function clearAllHistory() {
+    if (!confirm('ВНИМАНИЕ: Вы уверены, что хотите очистить ВСЮ историю ВСЕХ пользователей? Это действие нельзя отменить.')) {
+        return;
+    }
     
-    if (newResult !== null) {
-        try {
-            const response = await fetch(`/calculator/api/calculations/${id}/`, {
-                method: 'PATCH',
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ result: parseFloat(newResult) })
-            });
-            
-            if (response.ok) {
-                showMessage('Запись обновлена');
-                loadAdminCalculations();
-            } else {
-                const data = await response.json();
-                showError(data.detail || 'Ошибка обновления');
-            }
-        } catch (error) {
-            showError('Ошибка обновления: ' + error.message);
+    try {
+        const csrfToken = getCSRFToken();
+        const response = await fetch('/calculator/api/clear-history/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken
+            },
+            body: JSON.stringify({ all_users: true }),
+            credentials: 'include'
+        });
+        
+        if (response.ok) {
+            showMessage('Вся история очищена');
+            loadAdminCalculations();
+        } else if (response.status === 403) {
+            showMessage('Недостаточно прав для очистки всей истории', true);
+        } else {
+            const errorData = await response.json();
+            showMessage('Ошибка очистки: ' + (errorData.detail || response.status), true);
         }
+    } catch (error) {
+        showMessage('Ошибка сети: ' + error.message, true);
     }
 }
 
-function showMessage(message) {
-    alert(message);
+function adminViewDetails(id) {
+    showMessage(`Просмотр записи ID: ${id}. Реализация детального просмотра может быть добавлена позже.`);
 }
 
-function showError(message) {
-    alert('Ошибка: ' + message);
+function showMessage(message, isError = false) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = isError ? 'flash-message error' : 'flash-message';
+    messageDiv.textContent = message;
+    document.body.appendChild(messageDiv);
+    
+    setTimeout(() => {
+        messageDiv.remove();
+    }, 3000);
 }
 </script>
 
@@ -213,6 +329,74 @@ function showError(message) {
     border-radius: 20px;
     padding: 30px;
     box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+}
+
+.access-denied {
+    text-align: center;
+    padding: 40px;
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    border-radius: 10px;
+    color: #856404;
+}
+
+.access-denied h2 {
+    color: #856404;
+    margin-bottom: 20px;
+}
+
+.suggestions {
+    text-align: left;
+    margin: 20px 0;
+    padding: 15px;
+    background: white;
+    border-radius: 5px;
+}
+
+.suggestions ul {
+    text-align: left;
+    margin-left: 20px;
+}
+
+.admin-commands {
+    text-align: left;
+    margin: 20px 0;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 5px;
+    font-family: monospace;
+    font-size: 12px;
+    overflow-x: auto;
+}
+
+.navigation-links {
+    margin-top: 30px;
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+}
+
+.btn-back, .btn-django-admin {
+    padding: 10px 20px;
+    border-radius: 10px;
+    text-decoration: none;
+    font-weight: 600;
+    transition: all 0.3s;
+}
+
+.btn-back {
+    background: #667eea;
+    color: white;
+}
+
+.btn-django-admin {
+    background: #4cd964;
+    color: white;
+}
+
+.btn-back:hover, .btn-django-admin:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
 }
 
 .admin-stats-container {
@@ -246,6 +430,14 @@ function showError(message) {
     opacity: 0.9;
 }
 
+.stat-card.total {
+    background: linear-gradient(135deg, #4cd964 0%, #5ac8fa 100%);
+}
+
+.stat-card.recent {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ffa8a8 100%);
+}
+
 .user-filters {
     display: flex;
     gap: 10px;
@@ -253,12 +445,41 @@ function showError(message) {
     flex-wrap: wrap;
 }
 
-.user-filters input {
+.user-filters input, .user-filters select {
     padding: 10px;
     border: 2px solid #e0e0e0;
     border-radius: 10px;
     font-size: 14px;
-    min-width: 200px;
+    min-width: 150px;
+}
+
+.user-filters input:focus, .user-filters select:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.btn-refresh, .btn-clear-all {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.3s;
+}
+
+.btn-refresh {
+    background: #4cd964;
+    color: white;
+}
+
+.btn-clear-all {
+    background: #ff4757;
+    color: white;
+}
+
+.btn-refresh:hover, .btn-clear-all:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
 }
 
 .admin-table-container {
@@ -272,12 +493,13 @@ function showError(message) {
 }
 
 .admin-table th {
-    background: #f8f9fa;
+    background: #667eea;
+    color: white;
     padding: 15px;
     text-align: left;
-    border-bottom: 2px solid #e0e0e0;
     font-weight: 600;
-    color: #333;
+    position: sticky;
+    top: 0;
 }
 
 .admin-table td {
@@ -289,24 +511,82 @@ function showError(message) {
     background: #f8f9fa;
 }
 
-.admin-table .loading, .admin-table .empty {
+.user-cell {
+    display: flex;
+    flex-direction: column;
+}
+
+.username {
+    font-weight: 600;
+}
+
+.user-id {
+    font-size: 12px;
+    color: #666;
+}
+
+.operation-badge {
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 15px;
+    font-size: 12px;
+    font-weight: 600;
+    color: white;
+}
+
+.operation-badge.add { background: #4cd964; }
+.operation-badge.subtract { background: #ff6b6b; }
+.operation-badge.multiply { background: #ffa502; }
+.operation-badge.divide { background: #3742fa; }
+.operation-badge.power { background: #a55eea; }
+.operation-badge.sqrt { background: #20bf6b; }
+
+.btn-delete, .btn-view {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    transition: all 0.3s;
+}
+
+.btn-delete:hover {
+    background: #ff4757;
+    color: white;
+}
+
+.btn-view:hover {
+    background: #667eea;
+    color: white;
+}
+
+.loading, .empty {
     text-align: center;
     padding: 40px;
     color: #666;
 }
 
-.btn-refresh {
-    padding: 10px 20px;
-    background: #4cd964;
-    color: white;
-    border: none;
-    border-radius: 10px;
-    cursor: pointer;
-    font-weight: 600;
+.flash-message.error {
+    background: #ff4757;
 }
 
-.btn-refresh:hover {
-    background: #44b856;
+@media (max-width: 768px) {
+    .user-filters {
+        flex-direction: column;
+    }
+    
+    .user-filters input, .user-filters select {
+        width: 100%;
+    }
+    
+    .admin-table {
+        font-size: 14px;
+    }
+    
+    .admin-table th, .admin-table td {
+        padding: 10px;
+    }
 }
 </style>
 {% endblock %}
