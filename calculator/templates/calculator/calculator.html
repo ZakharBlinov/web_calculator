@@ -4,6 +4,14 @@
 <div class="calculator-container">
     <h1>Калькулятор</h1>
     
+    <div class="auth-info">
+        {% if not user.is_authenticated %}
+        <div class="auth-warning" id="auth-warning">
+            <p>⚠️ Для сохранения истории операций необходимо <a href="#" onclick="showLogin()">войти</a> или <a href="#" onclick="showRegister()">зарегистрироваться</a></p>
+        </div>
+        {% endif %}
+    </div>
+    
     <div class="calculator-form">
         <div class="input-group">
             <input type="text" id="num1" placeholder="Первое число" class="number-input">
@@ -39,12 +47,15 @@
             <li>Выберите операцию из выпадающего списка</li>
             <li>Для квадратного корня используйте только первое поле</li>
             <li>Поддерживаются дробные числа (через точку)</li>
+            <li>При авторизации все вычисления сохраняются в вашей истории</li>
         </ul>
     </div>
 </div>
 
 <script>
-let csrfToken = '{{ csrf_token }}';
+document.addEventListener('DOMContentLoaded', function() {
+    updateOperationField();
+});
 
 function validateInput(value) {
     if (value === '') return true;
@@ -52,13 +63,14 @@ function validateInput(value) {
     return regex.test(value);
 }
 
-function calculate() {
+async function calculate() {
     const num1 = document.getElementById('num1').value;
     const num2 = document.getElementById('num2').value;
     const operation = document.getElementById('operation').value;
     const resultDiv = document.getElementById('result');
     const errorDiv = document.getElementById('error');
     
+    resultDiv.innerHTML = '<div class="calculating">Вычисление...</div>';
     errorDiv.textContent = '';
     errorDiv.classList.remove('show');
     
@@ -77,35 +89,37 @@ function calculate() {
         return;
     }
     
-    const formData = new FormData();
-    formData.append('num1', num1);
-    formData.append('num2', num2);
-    formData.append('operation', operation);
-    formData.append('csrfmiddlewaretoken', csrfToken);
-    
-    fetch('{% url "calculate" %}', {
-        method: 'POST',
-        body: formData
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.error) {
-            showError(data.error);
+    try {
+        const data = await performCalculation(num1, num2, operation);
+        
+        resultDiv.innerHTML = `
+            <div class="result-success">
+                <div class="expression">${data.calculation.expression}</div>
+                <div class="equals">=</div>
+                <div class="final-result">${data.result}</div>
+                <div class="saved-info">✅ Результат сохранен в истории</div>
+            </div>
+        `;
+        resultDiv.classList.add('success');
+        
+        setTimeout(() => {
+            resultDiv.classList.remove('success');
+        }, 2000);
+        
+    } catch (error) {
+        if (error.message === 'Требуется авторизация' || error.message.includes('CSRF ошибка')) {
+            showError(error.message);
+            showLogin();
         } else {
-            resultDiv.textContent = data.operation;
-            resultDiv.classList.add('success');
-            setTimeout(() => resultDiv.classList.remove('success'), 1000);
+            showError(error.message);
         }
-    })
-    .catch(error => {
-        showError('Ошибка соединения с сервером');
-    });
+    }
 }
 
 function clearInputs() {
     document.getElementById('num1').value = '';
     document.getElementById('num2').value = '';
-    document.getElementById('result').textContent = 'Введите числа и выберите операцию';
+    document.getElementById('result').innerHTML = 'Введите числа и выберите операцию';
     document.getElementById('error').textContent = '';
     document.getElementById('error').classList.remove('show');
 }
@@ -114,18 +128,24 @@ function showError(message) {
     const errorDiv = document.getElementById('error');
     errorDiv.textContent = message;
     errorDiv.classList.add('show');
+    const resultDiv = document.getElementById('result');
+    resultDiv.innerHTML = 'Произошла ошибка';
 }
 
-document.getElementById('operation').addEventListener('change', function() {
+function updateOperationField() {
+    const operation = document.getElementById('operation').value;
     const num2Input = document.getElementById('num2');
-    if (this.value === 'sqrt') {
+    if (operation === 'sqrt') {
         num2Input.disabled = true;
         num2Input.placeholder = 'Не требуется';
+        num2Input.value = '';
     } else {
         num2Input.disabled = false;
         num2Input.placeholder = 'Второе число';
     }
-});
+}
+
+document.getElementById('operation').addEventListener('change', updateOperationField);
 
 document.getElementById('num1').addEventListener('input', function() {
     if (!validateInput(this.value) && this.value !== '') {
@@ -143,4 +163,67 @@ document.getElementById('num2').addEventListener('input', function() {
     }
 });
 </script>
+
+<style>
+.result-success {
+    text-align: center;
+    padding: 20px;
+}
+
+.expression {
+    font-size: 1.5rem;
+    color: #333;
+    margin-bottom: 10px;
+}
+
+.equals {
+    font-size: 1.2rem;
+    color: #666;
+    margin: 5px 0;
+}
+
+.final-result {
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: #4cd964;
+    margin: 10px 0;
+}
+
+.saved-info {
+    font-size: 0.9rem;
+    color: #667eea;
+    margin-top: 10px;
+    font-style: italic;
+}
+
+.calculating {
+    text-align: center;
+    color: #667eea;
+    font-style: italic;
+}
+
+.number-input.invalid {
+    border-color: #ff4757;
+    background-color: rgba(255, 71, 87, 0.05);
+}
+
+.auth-warning {
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    color: #856404;
+    padding: 12px 20px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+}
+
+.auth-warning a {
+    color: #667eea;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.auth-warning a:hover {
+    text-decoration: underline;
+}
+</style>
 {% endblock %}

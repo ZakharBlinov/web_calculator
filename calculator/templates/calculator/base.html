@@ -6,6 +6,128 @@
     <title>{% block title %}Веб-калькулятор{% endblock %}</title>
     {% load static %}
     <link rel="stylesheet" href="{% static 'calculator/css/style.css' %}">
+    <style>
+        .auth-buttons {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .username {
+            font-weight: bold;
+            color: #333;
+        }
+        .admin-badge {
+            background: #ff4757;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 5px;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        .modal-content {
+            background-color: white;
+            margin: 15% auto;
+            padding: 30px;
+            border-radius: 15px;
+            width: 90%;
+            max-width: 400px;
+            position: relative;
+            animation: modalSlide 0.3s ease;
+        }
+        @keyframes modalSlide {
+            from {
+                opacity: 0;
+                transform: translateY(-50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .close {
+            position: absolute;
+            right: 20px;
+            top: 15px;
+            font-size: 28px;
+            font-weight: bold;
+            color: #aaa;
+            cursor: pointer;
+        }
+        .close:hover {
+            color: #333;
+        }
+        .flash-message {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: #4cd964;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 10px;
+            z-index: 10000;
+            animation: slideIn 0.3s ease;
+        }
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        .btn-login, .btn-register, .btn-logout {
+            padding: 8px 20px;
+            border-radius: 20px;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        .btn-login {
+            background: #667eea;
+            color: white;
+        }
+        .btn-register {
+            background: #4cd964;
+            color: white;
+        }
+        .btn-logout {
+            background: #ff4757;
+            color: white;
+        }
+        .btn-login:hover, .btn-register:hover, .btn-logout:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        .error-message {
+            color: #ff4757;
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            background: rgba(255, 71, 87, 0.1);
+            display: none;
+        }
+        .error-message.show {
+            display: block;
+        }
+    </style>
 </head>
 <body>
     <nav class="navbar">
@@ -14,6 +136,15 @@
             <div class="nav-links">
                 <a href="{% url 'calculator' %}">Калькулятор</a>
                 <a href="{% url 'history' %}">История операций</a>
+                {% if user.is_authenticated %}
+                    <a href="#" id="profile-link" style="display:none;">Профиль</a>
+                    {% if user.is_staff %}
+                        <a href="#" id="admin-link" style="display:none;">Админ-панель</a>
+                    {% endif %}
+                {% endif %}
+            </div>
+            <div class="auth-buttons" id="auth-buttons">
+                <span id="auth-placeholder">Загрузка...</span>
             </div>
         </div>
     </nav>
@@ -23,11 +154,411 @@
         {% endblock %}
     </div>
 
+    <div id="login-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('login-modal')">&times;</span>
+            <h2>Вход в систему</h2>
+            <input type="text" id="login-username" placeholder="Имя пользователя">
+            <input type="password" id="login-password" placeholder="Пароль">
+            <button onclick="performLogin()" class="btn-calculate">Войти</button>
+            <div id="login-error" class="error-message"></div>
+        </div>
+    </div>
+
+    <div id="register-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('register-modal')">&times;</span>
+            <h2>Регистрация</h2>
+            <input type="text" id="register-username" placeholder="Имя пользователя">
+            <input type="email" id="register-email" placeholder="Email (опционально)">
+            <input type="password" id="register-password" placeholder="Пароль">
+            <input type="password" id="register-confirm" placeholder="Подтвердите пароль">
+            <button onclick="performRegister()" class="btn-calculate">Зарегистрироваться</button>
+            <div id="register-error" class="error-message"></div>
+        </div>
+    </div>
+
+    <div id="profile-modal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('profile-modal')">&times;</span>
+            <h2>Профиль</h2>
+            <div id="profile-info">Загрузка...</div>
+        </div>
+    </div>
+
     <footer class="footer">
-        <p>Веб-калькулятор на Django © 2024</p>
+        <p>Веб-калькулятор © 2024</p>
     </footer>
 
+    <script>
+        let currentUser = null;
+
+        document.addEventListener('DOMContentLoaded', async function() {
+            try {
+                await checkAuth();
+                ensureAuthButtons();
+                updateAuthUI();
+            } catch (error) {
+                console.error('Ошибка инициализации:', error);
+            }
+        });
+
+        function getCSRFToken() {
+            const cookies = document.cookie.split(';');
+            for (let cookie of cookies) {
+                const [name, value] = cookie.trim().split('=');
+                if (name === 'csrftoken') {
+                    return decodeURIComponent(value);
+                }
+            }
+            return '';
+        }
+
+        async function checkAuth() {
+            try {
+                const response = await fetch('/calculator/api/profile/', {
+                    credentials: 'include'
+                });
+                
+                if (response.ok) {
+                    const userData = await response.json();
+                    currentUser = userData;
+                    return true;
+                }
+            } catch (error) {
+                console.log('Ошибка проверки авторизации:', error);
+            }
+            
+            return false;
+        }
+
+        function ensureAuthButtons() {
+            let authButtons = document.getElementById('auth-buttons');
+            if (!authButtons) {
+                authButtons = document.createElement('div');
+                authButtons.id = 'auth-buttons';
+                authButtons.className = 'auth-buttons';
+                
+                const navContainer = document.querySelector('.nav-container');
+                if (navContainer) {
+                    navContainer.appendChild(authButtons);
+                }
+            }
+            return authButtons;
+        }
+
+        function updateAuthUI() {
+            const authButtons = document.getElementById('auth-buttons');
+            if (!authButtons) return;
+
+            if (currentUser) {
+                authButtons.innerHTML = `
+                    <div class="user-info">
+                        <span class="username">${currentUser.username}</span>
+                        ${currentUser.is_staff ? '<span class="admin-badge">ADMIN</span>' : ''}
+                        <button onclick="logout()" class="btn-logout">Выйти</button>
+                    </div>
+                `;
+                
+                updateNavLinks();
+            } else {
+                authButtons.innerHTML = `
+                    <button onclick="showLogin()" class="btn-login">Войти</button>
+                    <button onclick="showRegister()" class="btn-register">Регистрация</button>
+                `;
+            }
+        }
+
+        function updateNavLinks() {
+            if (!currentUser) return;
+            
+            const profileLink = document.getElementById('profile-link');
+            const adminLink = document.getElementById('admin-link');
+            
+            if (profileLink) {
+                profileLink.style.display = 'inline-block';
+                profileLink.onclick = (e) => {
+                    e.preventDefault();
+                    showProfile();
+                };
+            }
+            
+            if (adminLink && currentUser.is_staff) {
+                adminLink.style.display = 'inline-block';
+                adminLink.onclick = (e) => {
+                    e.preventDefault();
+                    window.location.href = '/calculator/admin-panel/';
+                };
+            }
+        }
+
+        function clearAuth() {
+            currentUser = null;
+        }
+
+        function showLogin() {
+            document.getElementById('login-modal').style.display = 'block';
+        }
+
+        function showRegister() {
+            document.getElementById('register-modal').style.display = 'block';
+        }
+
+        function showProfile() {
+            loadProfile();
+            document.getElementById('profile-modal').style.display = 'block';
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+        }
+
+        async function performLogin() {
+            const username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+            const errorDiv = document.getElementById('login-error');
+
+            if (!username || !password) {
+                showModalError(errorDiv, 'Заполните все поля');
+                return;
+            }
+
+            try {
+                const csrfToken = getCSRFToken();
+                const response = await fetch('/calculator/api/login/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({ username, password }),
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    currentUser = data;
+                    closeModal('login-modal');
+                    updateAuthUI();
+                    showMessage('Успешный вход!');
+                    
+                    setTimeout(() => {
+                        window.location.href = '/calculator/';
+                    }, 1000);
+                } else {
+                    showModalError(errorDiv, data.error || 'Ошибка входа');
+                }
+            } catch (error) {
+                showModalError(errorDiv, 'Ошибка соединения: ' + error.message);
+            }
+        }
+
+        async function performRegister() {
+            const username = document.getElementById('register-username').value;
+            const email = document.getElementById('register-email').value;
+            const password = document.getElementById('register-password').value;
+            const confirm = document.getElementById('register-confirm').value;
+            const errorDiv = document.getElementById('register-error');
+
+            if (!username || !password) {
+                showModalError(errorDiv, 'Имя пользователя и пароль обязательны');
+                return;
+            }
+
+            if (password !== confirm) {
+                showModalError(errorDiv, 'Пароли не совпадают');
+                return;
+            }
+
+            try {
+                const csrfToken = getCSRFToken();
+                const response = await fetch('/calculator/api/register/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({ username, email, password }),
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    currentUser = data;
+                    closeModal('register-modal');
+                    updateAuthUI();
+                    showMessage('Регистрация успешна!');
+                    
+                    setTimeout(() => {
+                        window.location.href = '/calculator/';
+                    }, 1000);
+                } else {
+                    showModalError(errorDiv, data.error || 'Ошибка регистрации');
+                }
+            } catch (error) {
+                showModalError(errorDiv, 'Ошибка соединения: ' + error.message);
+            }
+        }
+
+        async function loadProfile() {
+            try {
+                const response = await fetch('/calculator/api/profile/', {
+                    credentials: 'include'
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('profile-info').innerHTML = `
+                        <p><strong>Имя пользователя:</strong> ${data.username}</p>
+                        <p><strong>Email:</strong> ${data.email || 'Не указан'}</p>
+                        <p><strong>Статус:</strong> ${data.is_staff ? 'Администратор' : 'Пользователь'}</p>
+                        <p><strong>ID:</strong> ${data.id}</p>
+                    `;
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки профиля:', error);
+            }
+        }
+
+        async function logout() {
+            if (!confirm('Вы уверены, что хотите выйти?')) {
+                return;
+            }
+
+            try {
+                const csrfToken = getCSRFToken();
+                
+                await fetch('/calculator/api/logout/', {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': csrfToken
+                    },
+                    credentials: 'include'
+                });
+            } catch (error) {
+                console.log('Ошибка при выходе:', error);
+            }
+
+            clearAuth();
+            updateAuthUI();
+            showMessage('Вы вышли из системы');
+            
+            setTimeout(() => {
+                window.location.href = '/calculator/';
+            }, 1000);
+        }
+
+        function showModalError(errorDiv, message) {
+            errorDiv.textContent = message;
+            errorDiv.classList.add('show');
+            setTimeout(() => {
+                errorDiv.classList.remove('show');
+                errorDiv.textContent = '';
+            }, 3000);
+        }
+
+        function showMessage(message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'flash-message';
+            messageDiv.textContent = message;
+            document.body.appendChild(messageDiv);
+            
+            setTimeout(() => {
+                messageDiv.remove();
+            }, 3000);
+        }
+
+        window.performCalculation = async function(num1, num2, operation) {
+            try {
+                console.log('Вызов performCalculation:', { num1, num2, operation });
+                
+                const csrfToken = getCSRFToken();
+                console.log('CSRF Token:', csrfToken ? 'есть' : 'нет');
+
+                const payload = { 
+                    num1: parseFloat(num1), 
+                    num2: parseFloat(num2), 
+                    operation: operation 
+                };
+                console.log('Payload:', payload);
+
+                const response = await fetch('/calculator/api/calculate/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify(payload),
+                    credentials: 'include'
+                 });
+
+                console.log('Response status:', response.status);
+                console.log('Response headers:', response.headers);
+                
+                if (response.status === 403) {
+                     const errorData = await response.json();
+                     console.error('CSRF ошибка:', errorData);
+                     throw new Error('CSRF ошибка. Пожалуйста, перезагрузите страницу и войдите снова.');
+                }
+
+                if (response.status === 401) {
+                     const errorData = await response.json();
+                     onsole.error('Ошибка авторизации:', errorData);
+                     throw new Error('Требуется авторизация. Пожалуйста, войдите в систему.');
+                }
+
+                 if (!response.ok) {
+                     const errorData = await response.json();
+                     console.error('Ошибка сервера:', errorData);
+                     throw new Error(errorData.error || 'Ошибка сервера');
+                }
+                
+                const data = await response.json();
+                console.log('Успешный ответ:', data);
+
+                return data;
+            } catch (error) {
+                console.error('Ошибка в performCalculation:', error);
+                throw error;
+            }
+        };
+
+        window.loadHistoryData = async function() {
+            try {
+                const response = await fetch('/calculator/api/calculations/', {
+                    credentials: 'include'
+                });
+
+                if (response.status === 401) {
+                    throw new Error('Требуется авторизация');
+                }
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    return data.results || data;
+                } else {
+                    throw new Error('Ошибка загрузки истории');
+                }
+            } catch (error) {
+                throw error;
+            }
+        };
+
+        window.onclick = function(event) {
+            const modals = document.querySelectorAll('.modal');
+            modals.forEach(modal => {
+                if (event.target == modal) {
+                    modal.style.display = 'none';
+                }
+            });
+        };
+    </script>
+
     {% block scripts %}
+    {% csrf_token %}
     {% endblock %}
 </body>
 </html>

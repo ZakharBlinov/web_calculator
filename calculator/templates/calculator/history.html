@@ -8,57 +8,280 @@
         <button onclick="clearHistory()" class="btn-clear-history">Очистить историю</button>
     </div>
     
-    {% if history %}
-    <div class="history-list">
-        <table class="history-table">
-            <thead>
-                <tr>
-                    <th>Операция</th>
-                    <th>Результат</th>
-                    <th>Время</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for entry in history %}
-                <tr>
-                    <td>
-                        {{ entry.num1 }}
-                        {{ entry.operation }}
-                        {% if entry.num2 is not None %}
-                        {{ entry.num2 }}
-                        {% endif %}
-                    </td>
-                    <td>{{ entry.result }}</td>
-                    <td>{{ entry.timestamp }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+    <div class="history-stats" id="history-stats"></div>
+    
+    <div id="history-list" class="history-list">
+        <div class="loading">Загрузка истории...</div>
     </div>
-    {% else %}
-    <div class="empty-history">
-        <p>История операций пуста</p>
-    </div>
-    {% endif %}
 </div>
 
 <script>
-function clearHistory() {
-    if (confirm('Вы уверены, что хотите очистить историю?')) {
-        fetch('{% url "clear_history" %}', {
+document.addEventListener('DOMContentLoaded', function() {
+    loadHistory();
+    loadStatistics();
+});
+
+async function loadHistory() {
+    try {
+        const calculations = await loadHistoryData();
+        
+        if (calculations && calculations.length > 0) {
+            renderHistory(calculations);
+        } else {
+            document.getElementById('history-list').innerHTML = `
+                <div class="empty-history">
+                    <p>История операций пуста</p>
+                    <p>Выполните вычисления в калькуляторе, чтобы они появились здесь</p>
+                </div>
+            `;
+        }
+    } catch (error) {
+        if (error.message === 'Требуется авторизация') {
+            document.getElementById('history-list').innerHTML = `
+                <div class="empty-history">
+                    <p>Для просмотра истории необходимо войти в систему</p>
+                    <button onclick="showLogin()" class="btn-login">Войти</button>
+                </div>
+            `;
+        } else {
+            document.getElementById('history-list').innerHTML = `
+                <div class="error-history">
+                    <p>Ошибка загрузки истории: ${error.message}</p>
+                </div>
+            `;
+        }
+    }
+}
+
+function renderHistory(calculations) {
+    const historyList = document.getElementById('history-list');
+    
+    let html = `
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>Выражение</th>
+                    <th>Результат</th>
+                    <th>Дата и время</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+    
+    calculations.forEach(calc => {
+        const date = new Date(calc.created_at);
+        const formattedDate = date.toLocaleDateString('ru-RU') + ' ' + date.toLocaleTimeString('ru-RU', { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+        });
+        
+        html += `
+            <tr>
+                <td>${calc.expression}</td>
+                <td><strong>${calc.result}</strong></td>
+                <td>${formattedDate}</td>
+                <td>
+                    <button onclick="deleteCalculation(${calc.id})" class="btn-delete">Удалить</button>
+                </td>
+            </tr>
+        `;
+    });
+    
+    html += `
+            </tbody>
+        </table>
+    `;
+    
+    historyList.innerHTML = html;
+}
+
+async function clearHistory() {
+    if (!confirm('Вы уверены, что хотите очистить всю историю операций? Это действие нельзя отменить.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/calculator/api/clear-history/', {
             method: 'POST',
             headers: {
-                'X-CSRFToken': '{{ csrf_token }}',
+                'Authorization': `Bearer ${accessToken}`,
                 'Content-Type': 'application/json'
-            }
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                location.reload();
+            },
+            body: JSON.stringify({ all_users: false })
+        });
+        
+        if (response.ok) {
+            showMessage('История операций очищена');
+            loadHistory();
+        } else {
+            const data = await response.json();
+            showError(data.error || 'Ошибка при очистке истории');
+        }
+    } catch (error) {
+        showError('Ошибка при очистке истории: ' + error.message);
+    }
+}
+
+async function deleteCalculation(id) {
+    if (!confirm('Удалить эту запись из истории?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/calculator/api/calculations/${id}/`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`
             }
         });
+        
+        if (response.ok) {
+            showMessage('Запись удалена');
+            loadHistory();
+        } else {
+            const data = await response.json();
+            showError(data.detail || 'Ошибка удаления');
+        }
+    } catch (error) {
+        showError('Ошибка удаления: ' + error.message);
+    }
+}
+
+async function loadStatistics() {
+    if (!accessToken) return;
+    
+    try {
+        const response = await fetch('/calculator/api/statistics/', {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            const statsDiv = document.getElementById('history-stats');
+            
+            let html = '<div class="stats-container">';
+            html += `<p>Всего вычислений: <strong>${data.total_calculations}</strong></p>`;
+            
+            html += '</div>';
+            
+            statsDiv.innerHTML = html;
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки статистики:', error);
     }
 }
 </script>
+
+<style>
+.history-container {
+    background: white;
+    border-radius: 20px;
+    padding: 30px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+}
+
+.history-controls {
+    margin-bottom: 20px;
+    text-align: right;
+}
+
+.btn-clear-history {
+    padding: 10px 20px;
+    background: #ff4757;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.3s;
+}
+
+.btn-clear-history:hover {
+    background: #ff3742;
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(255, 71, 87, 0.3);
+}
+
+.history-stats {
+    background: #f8f9fa;
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+}
+
+.stats-container {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+}
+
+.history-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 20px;
+}
+
+.history-table th {
+    background: #667eea;
+    color: white;
+    padding: 15px;
+    text-align: left;
+    font-weight: 600;
+}
+
+.history-table td {
+    padding: 15px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.history-table tr:hover {
+    background: #f8f9fa;
+}
+
+.btn-delete {
+    padding: 8px 15px;
+    background: #ff4757;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.3s;
+}
+
+.btn-delete:hover {
+    background: #ff3742;
+}
+
+.loading, .empty-history, .error-history {
+    text-align: center;
+    padding: 40px;
+    color: #666;
+}
+
+.empty-history button, .error-history button {
+    margin-top: 15px;
+    padding: 10px 20px;
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+@media (max-width: 768px) {
+    .history-table {
+        display: block;
+        overflow-x: auto;
+    }
+    
+    .history-table th, .history-table td {
+        padding: 10px;
+        font-size: 14px;
+    }
+}
+</style>
 {% endblock %}

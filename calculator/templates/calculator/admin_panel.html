@@ -1,0 +1,312 @@
+{% extends 'calculator/base.html' %}
+
+{% block content %}
+<div class="admin-container">
+    <h1>Административная панель</h1>
+    
+    <div class="admin-stats" id="admin-stats"></div>
+    
+    <div class="admin-controls">
+        <div class="user-filters">
+            <input type="text" id="user-search" placeholder="Поиск пользователя..." oninput="loadAdminCalculations()">
+            <input type="number" id="user-id" placeholder="ID пользователя" onchange="loadAdminCalculations()">
+            <button onclick="loadAdminCalculations()" class="btn-refresh">Обновить</button>
+        </div>
+    </div>
+    
+    <div class="admin-table-container">
+        <table class="admin-table" id="admin-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Пользователь</th>
+                    <th>Выражение</th>
+                    <th>Результат</th>
+                    <th>Операция</th>
+                    <th>Дата</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody id="admin-table-body">
+                <tr>
+                    <td colspan="7" class="loading">Загрузка данных...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    if (!currentUser || !currentUser.is_staff) {
+        window.location.href = '/calculator/';
+        return;
+    }
+    loadAdminCalculations();
+    loadAdminStatistics();
+});
+
+async function loadAdminCalculations() {
+    const search = document.getElementById('user-search').value;
+    const userId = document.getElementById('user-id').value;
+    
+    let url = '/calculator/api/admin/calculations/?ordering=-created_at';
+    
+    if (search) {
+        url += `&search=${encodeURIComponent(search)}`;
+    }
+    
+    if (userId) {
+        url += `&user_id=${userId}`;
+    }
+    
+    try {
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            renderAdminTable(data.results || data);
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки данных:', error);
+    }
+}
+
+function renderAdminTable(calculations) {
+    const tbody = document.getElementById('admin-table-body');
+    
+    if (!calculations || calculations.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="7" class="empty">Нет данных для отображения</td>
+            </tr>
+        `;
+        return;
+    }
+    
+    let html = '';
+    
+    calculations.forEach(calc => {
+        const date = new Date(calc.created_at);
+        const formattedDate = date.toLocaleDateString('ru-RU') + ' ' + date.toLocaleTimeString('ru-RU');
+        
+        html += `
+            <tr data-id="${calc.id}">
+                <td>${calc.id}</td>
+                <td>${calc.username} (ID: ${calc.user})</td>
+                <td>${calc.expression}</td>
+                <td>${calc.result}</td>
+                <td>${calc.operation_display}</td>
+                <td>${formattedDate}</td>
+                <td>
+                    <button onclick="adminEditCalculation(${calc.id})" class="btn-edit">✏️</button>
+                    <button onclick="adminDeleteCalculation(${calc.id})" class="btn-delete">🗑️</button>
+                </td>
+            </tr>
+        `;
+    });
+    
+    tbody.innerHTML = html;
+}
+
+async function loadAdminStatistics() {
+    try {
+        const response = await fetch('/calculator/api/statistics/', {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            const statsDiv = document.getElementById('admin-stats');
+            
+            let html = '<div class="admin-stats-container">';
+            html += `<div class="stat-card"><h3>${data.total_calculations}</h3><p>Всего вычислений</p></div>`;
+            html += `<div class="stat-card"><h3>${data.total_users}</h3><p>Пользователей</p></div>`;
+            
+            for (const [op, count] of Object.entries(data.operation_stats)) {
+                const opNames = {
+                    'add': '➕',
+                    'subtract': '➖',
+                    'multiply': '✖️',
+                    'divide': '➗',
+                    'power': '🔢',
+                    'sqrt': '√'
+                };
+                html += `<div class="stat-card"><h3>${count}</h3><p>${opNames[op]}</p></div>`;
+            }
+            
+            html += '</div>';
+            statsDiv.innerHTML = html;
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки статистики:', error);
+    }
+}
+
+async function adminDeleteCalculation(id) {
+    if (!confirm('Удалить эту запись? Это действие нельзя отменить.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/calculator/api/calculations/${id}/`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`
+            }
+        });
+        
+        if (response.ok) {
+            showMessage('Запись удалена');
+            loadAdminCalculations();
+        }
+    } catch (error) {
+        showError('Ошибка удаления: ' + error.message);
+    }
+}
+
+async function adminEditCalculation(id) {
+    const newResult = prompt('Введите новое значение результата:');
+    
+    if (newResult !== null) {
+        try {
+            const response = await fetch(`/calculator/api/calculations/${id}/`, {
+                method: 'PATCH',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ result: parseFloat(newResult) })
+            });
+            
+            if (response.ok) {
+                showMessage('Запись обновлена');
+                loadAdminCalculations();
+            } else {
+                const data = await response.json();
+                showError(data.detail || 'Ошибка обновления');
+            }
+        } catch (error) {
+            showError('Ошибка обновления: ' + error.message);
+        }
+    }
+}
+
+function showMessage(message) {
+    alert(message);
+}
+
+function showError(message) {
+    alert('Ошибка: ' + message);
+}
+</script>
+
+<style>
+.admin-container {
+    background: white;
+    border-radius: 20px;
+    padding: 30px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+}
+
+.admin-stats-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.stat-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+    transition: transform 0.3s;
+}
+
+.stat-card:hover {
+    transform: translateY(-5px);
+}
+
+.stat-card h3 {
+    font-size: 2rem;
+    margin: 0;
+}
+
+.stat-card p {
+    margin: 10px 0 0 0;
+    font-size: 14px;
+    opacity: 0.9;
+}
+
+.user-filters {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.user-filters input {
+    padding: 10px;
+    border: 2px solid #e0e0e0;
+    border-radius: 10px;
+    font-size: 14px;
+    min-width: 200px;
+}
+
+.admin-table-container {
+    overflow-x: auto;
+    margin-top: 20px;
+}
+
+.admin-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.admin-table th {
+    background: #f8f9fa;
+    padding: 15px;
+    text-align: left;
+    border-bottom: 2px solid #e0e0e0;
+    font-weight: 600;
+    color: #333;
+}
+
+.admin-table td {
+    padding: 15px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.admin-table tr:hover {
+    background: #f8f9fa;
+}
+
+.admin-table .loading, .admin-table .empty {
+    text-align: center;
+    padding: 40px;
+    color: #666;
+}
+
+.btn-refresh {
+    padding: 10px 20px;
+    background: #4cd964;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.btn-refresh:hover {
+    background: #44b856;
+}
+</style>
+{% endblock %}
