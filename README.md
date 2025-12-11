@@ -9,7 +9,6 @@
 - Git
 
 ### Установка
-```bash
 # Клонирование репозитория
 git clone https://github.com/ZakharBlinov/web_calculator.git
 cd web_calculator
